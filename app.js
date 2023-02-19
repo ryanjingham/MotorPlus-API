@@ -29,6 +29,10 @@ app.post("/predict_keras", (req, res) => {
   res.send({ prediction: predictionResult });
 });
 
+app.get("/ping", (req, res) => {
+  res.send({ message: "One Ping Only, Vassily" });
+});
+
 app.listen(port, () => {
   console.log("API server started on port ${port}");
 });
