@@ -1,8 +1,8 @@
 from flask import Flask, request, abort
-import keras
+import pickle
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
 import json
 import os
 from apiauth import generate_api_key, load_user_api_keys, save_user_api_keys
@@ -11,8 +11,7 @@ app = Flask(__name__)
 model_metadata_file = "model_metadata.json"
 user_api_keys_file = "user_api_keys.json"
 
-latest_model_path = "models_prod/model_keras_latest.h5"
-model = keras.models.load_model(latest_model_path)
+latest_model_path = "models_prod/neural_network_model.pkl"
 
 if not os.path.exists(model_metadata_file):
     with open(model_metadata_file, "w") as metadata_file:
@@ -24,64 +23,42 @@ if not os.path.exists(model_metadata_file):
 user_api_keys = {}
 
 
-@app.route("/upload_model", methods=["POST"])
-def upload_model():
-    api_key = request.headers.get("X-API-Key")
-    if api_key not in user_api_keys.values():
-        abort(401, "Unauthorised")
-    # Retrieve the uploaded model file and new model name from the request
-    uploaded_file = request.files["model_file"]
-    new_model_name = request.form["model_name"]
-
-    # Define the path where the new model will be saved
-    new_model_path = f"models_prod/{new_model_name}.h5"
-
-    # Save the uploaded model file to the specified path
-    uploaded_file.save(new_model_path)
-
-    # Load the existing model metadata
-    with open(model_metadata_file, "r") as metadata_file:
-        model_metadata = json.load(metadata_file)
-
-    # Add the metadata of the new model to the existing metadata dictionary
-    model_metadata[new_model_name] = {"name": new_model_name, "path": new_model_path}
-
-    # Update the model metadata file with the new model metadata
-    with open(model_metadata_file, "w") as metadata_file:
-        json.dump(model_metadata, metadata_file)
-
-    # Reload the global model with the newly uploaded model
-    global model
-    model = keras.models.load_model(new_model_path)
-
-    return "Model uploaded and updated successfully"
+scaler = MinMaxScaler()
+training_data_file = "Datasets/auto-mpg.csv"
+data = pd.read_csv(training_data_file)
+data = data.replace("?", np.nan)
+data = data.dropna()
+X_train = data.drop("mpg", axis=1).values
+scaler.fit(X_train)
 
 
-@app.route("/predict_keras", methods=["POST"])
-def predict_keras():
-    api_key = request.headers.get("X-API-Key")
-    if api_key not in user_api_keys.values():
-        abort(401, "Unauthorised")
-    # Retrieve the vehicle data from the request
+@app.route("/predict_mpg", methods=["POST"])
+def predict_mpg():
     input_data = request.json.get("input_data")
 
-    # Convert the data to a pandas dataframe for processing
-    df = pd.DataFrame.from_dict(input_data, orient="index").transpose()
-    print(df)
+    cylinders = input_data.get("cylinders")
+    displacement = input_data.get("displacement")
+    horsepower = input_data.get("horsepower")
+    weight = input_data.get("weight")
+    acceleration = input_data.get("acceleration")
+    year = input_data.get("year")
 
-    # One-hot encoding on the "origin" (nation) column
-    df = pd.get_dummies(df, columns=["origin"])
+    input_features = np.array(
+        [[cylinders, displacement, horsepower, weight, acceleration, year]]
+    )
+    input_features = input_features.astype(float)
 
-    # Scale the input data
-    scaler = StandardScaler()
-    df = scaler.fit_transform(df)
+    loaded_model = None
+    with open(latest_model_path, "rb") as file:
+        loaded_model = pickle.load(file)
 
-    # Make predictions
-    prediction_result = model.predict(df)
-    print(prediction_result)
+    prediction = loaded_model.predict(input_features)
+    prediction = scaler.inverse_transform(
+        prediction.reshape(-1, 1)
+    )  # Inverse transform the array of predictions
 
-    # Convert the prediction results to a list and return as the response
-    return {"prediction": prediction_result.tolist()}
+    prediction_val = prediction[0][0]
+    return {"prediction": prediction_val}
 
 
 @app.route("/health", methods=["GET"])
